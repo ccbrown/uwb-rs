@@ -1,0 +1,17 @@
+[package]
+name = "uwb"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+dw3000-ng = { version = "1", features = ["defmt"] }
+defmt = "1"
+embedded-hal = { version = "1", features = ["defmt-03"] }
+embedded-hal-async = "1"
+embassy-time = "0.5"
+thiserror = { version = "2", default-features = false }
+num-traits = { version = "0.2", default-features = false }
+
+# socket-raw isn't strictly necessary, but smoltcp requires at least one socket feature to be enabled
+smoltcp = { version = "0.12", default-features = false, features = ["defmt", "medium-ieee802154", "socket-raw"] }
