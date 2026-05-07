@@ -19,9 +19,19 @@ impl Timestamp {
         raw * 10000000 / 4992 / 128
     }
 
+    pub fn picoseconds_to_raw(picoseconds: u64) -> u64 {
+        picoseconds * 4992 * 128 / 10000000
+    }
+
     /// Returns the timestamp in picoseconds.
     pub fn as_picoseconds(&self) -> u64 {
         Self::raw_to_picoseconds(self.0)
+    }
+
+    /// Returns a new timestamp that is the given number of picoseconds after this timestamp, accounting for rollover.
+    pub fn add_picoseconds(&self, picoseconds: u64) -> Self {
+        let raw = self.0 + Self::picoseconds_to_raw(picoseconds);
+        Timestamp(raw % (1 << 40))
     }
 
     /// Returns the number of picoseconds elapsed between this timestamp and another timestamp,

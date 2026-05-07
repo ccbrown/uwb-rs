@@ -1,4 +1,4 @@
-use crate::{AsleepState, Device, Error, ReceivingState, Result};
+use crate::{AsleepState, Device, Error, ReceivingState, Result, Timestamp};
 
 use dw3000_ng::{ll, FastCommand};
 use embedded_hal_async::{digital::Wait, spi::SpiDevice};
@@ -57,8 +57,45 @@ where
         Ok(ret)
     }
 
+    /// Sends a single IEEE 802.15.4 frame, returning the timestamp it was given.
+    pub async fn send(&mut self, buf: &[u8]) -> Result<SPI, Timestamp> {
+        self.prepare_tx(buf).await?;
+        self.dev.fast_command(FastCommand::CMD_TX as u8).await?;
+        self.wait_for_tx().await
+    }
+
     /// Sends a single IEEE 802.15.4 frame.
-    pub async fn send(&mut self, buf: &[u8]) -> Result<SPI, ()> {
+    ///
+    /// This function will wait until the given time to send the frame (accurate to ~4 ns).
+    pub async fn send_at(&mut self, buf: &[u8], timestamp: Timestamp) -> Result<SPI, Timestamp> {
+        self.prepare_tx(buf).await?;
+        self.dev
+            .dx_time()
+            .write(|w| w.value((timestamp.as_raw() >> 8) as _))
+            .await?;
+        self.dev.fast_command(FastCommand::CMD_DTX as u8).await?;
+        self.wait_for_tx().await
+    }
+
+    /// Sends a single IEEE 802.15.4 frame.
+    ///
+    /// This function will wait until the given interval has passed since the last frame was sent,
+    /// and then send the frame (accurate to ~4 ns).
+    pub async fn send_after_interval(
+        &mut self,
+        buf: &[u8],
+        interval_ns: u64,
+    ) -> Result<SPI, Timestamp> {
+        self.prepare_tx(buf).await?;
+        self.dev
+            .dx_time()
+            .write(|w| w.value(((interval_ns + 2) * (4992 / 2) / 10000) as _))
+            .await?;
+        self.dev.fast_command(FastCommand::CMD_DTX_TS as u8).await?;
+        self.wait_for_tx().await
+    }
+
+    async fn prepare_tx(&mut self, buf: &[u8]) -> Result<SPI, ()> {
         let dev = &mut self.dev;
         let config = &self.config;
 
@@ -114,17 +151,21 @@ where
         dev.sys_status().write(|w| w.txfrs(1)).await?;
         dev.sys_enable().write(|w| w.txfrs_en(1)).await?;
 
-        dev.fast_command(FastCommand::CMD_TX as u8).await?;
+        Ok(())
+    }
 
+    async fn wait_for_tx(&mut self) -> Result<SPI, Timestamp> {
         loop {
             let _ = self.irq.wait_for_high().await;
 
-            let status = dev.sys_status().read().await?;
+            let status = self.dev.sys_status().read().await?;
             if status.txfrs() == 1 {
                 break;
             }
         }
 
-        Ok(())
+        let timestamp = Timestamp::from_raw(self.dev.tx_time().read().await?.tx_stamp());
+
+        Ok(timestamp)
     }
 }
