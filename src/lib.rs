@@ -5,21 +5,29 @@ pub use uninitialized::*;
 
 mod asleep;
 pub use asleep::*;
+mod receiving;
+pub use receiving::*;
 mod ready;
 pub use ready::*;
+mod timestamp;
+pub use timestamp::*;
 
-use dw3000_ng::configs::{
-    BitRate, PhrMode, PhrRate, PreambleLength, PulseRepetitionFrequency, SfdSequence, UwbChannel,
+pub use dw3000_ng::configs::{
+    BitRate, PhrMode, PhrRate, PreambleLength, PulseRepetitionFrequency, SfdSequence,
+    UwbChannel as Channel,
 };
+pub use smoltcp::wire::ieee802154;
+
 use embedded_hal::digital::OutputPin;
-use embedded_hal_async::{digital::Wait, spi::SpiDevice};
+use embedded_hal_async::{delay::DelayNs, digital::Wait, spi::SpiDevice};
 use smoltcp::wire::ieee802154::{Address, Pan};
 
 // The dw3000_ng crate has both a high and low level API for interacting with the DW3000.
-// Unfortunately the high level API is buggy, not particularly well designed, and is lacking many
-// essential features such as encryption or deep sleep. So we use the low level API.
+// Unfortunately we've had issues with the high level API and found it to be lacking essential
+// features such as deep sleep. So we use the low level API.
 use dw3000_ng::ll;
 
+#[non_exhaustive]
 #[derive(Clone)]
 pub struct Config {
     /// Enable diagnostic features such as signal power estimation. This is disabled by default as
@@ -28,7 +36,7 @@ pub struct Config {
     pub enable_diagnostics: bool,
 
     pub pan: Pan,
-    pub channel: UwbChannel,
+    pub channel: Channel,
     pub pulse_repetition_frequency: PulseRepetitionFrequency,
     pub preamble_length: PreambleLength,
     pub phr_mode: PhrMode,
@@ -45,7 +53,7 @@ impl Default for Config {
         Self {
             enable_diagnostics: false,
             pan: Pan(12345),
-            channel: UwbChannel::Channel9,
+            channel: Channel::Channel9,
             pulse_repetition_frequency: PulseRepetitionFrequency::Mhz64,
             preamble_length: PreambleLength::Symbols64,
             phr_mode: PhrMode::Standard,
@@ -59,41 +67,77 @@ impl Default for Config {
     }
 }
 
-pub struct Device<SPI, O, IRQ, State> {
+pub struct Device<SPI, O, IRQ, Delay, State> {
     address: [u8; 8],
     config: Config,
     dev: ll::DW3000<SPI>,
     irq: IRQ,
     rst: O,
+    delay: Delay,
     state: State,
 }
 
-impl<SPI, O, IRQ, State> Device<SPI, O, IRQ, State>
+impl<SPI, O, IRQ, Delay, State> Device<SPI, O, IRQ, Delay, State>
 where
     SPI: SpiDevice,
     O: OutputPin,
     IRQ: Wait,
+    Delay: DelayNs,
 {
     /// Fully resets the device.
-    pub async fn reset(self) -> Result<SPI, Device<SPI, O, IRQ, ReadyState>> {
+    pub async fn reset(self) -> Result<SPI, Device<SPI, O, IRQ, Delay, ReadyState>> {
         let config = self.config.clone();
         self.with_state(UninitializedState).init(config).await
     }
 }
 
-impl<SPI, O, IRQ, State> Device<SPI, O, IRQ, State> {
+impl<SPI, O, IRQ, Delay, State> Device<SPI, O, IRQ, Delay, State>
+where
+    SPI: SpiDevice,
+{
+    /// Reads bytes directly from a register. The given buffer should be 2 bytes plus the length of
+    /// the data to be read, and the data will be read into the buffer starting at index 2.
+    pub(crate) async fn read_reg(&mut self, id: u8, offset: u8, buf: &mut [u8]) -> Result<SPI, ()> {
+        buf[0] = (1 << 6) | (id << 1) | (offset >> 6);
+        buf[1] = offset << 2;
+        self.dev
+            .bus()
+            .transfer_in_place(buf)
+            .await
+            .map_err(ll::Error::Transfer)?;
+        Ok(())
+    }
+
+    pub(crate) async fn read_reg_u32(&mut self, id: u8, offset: u8) -> Result<SPI, u32> {
+        let mut buf = [0; 6];
+        self.read_reg(id, offset, &mut buf).await?;
+        Ok(u32::from_le_bytes(buf[2..6].try_into().unwrap()))
+    }
+
+    pub(crate) async fn read_reg_u64(&mut self, id: u8, offset: u8) -> Result<SPI, u64> {
+        let mut buf = [0; 10];
+        self.read_reg(id, offset, &mut buf).await?;
+        Ok(u64::from_le_bytes(buf[2..10].try_into().unwrap()))
+    }
+}
+
+impl<SPI, O, IRQ, Delay, State> Device<SPI, O, IRQ, Delay, State> {
     /// Returns the device's IEEE 802.15.4 address.
     pub fn address(&self) -> Address {
         Address::Extended(self.address)
     }
 
-    pub(crate) fn with_state<NewState>(self, new_state: NewState) -> Device<SPI, O, IRQ, NewState> {
+    pub(crate) fn with_state<NewState>(
+        self,
+        new_state: NewState,
+    ) -> Device<SPI, O, IRQ, Delay, NewState> {
         Device {
             address: self.address,
             config: self.config,
             dev: self.dev,
             irq: self.irq,
             rst: self.rst,
+            delay: self.delay,
             state: new_state,
         }
     }
@@ -111,9 +155,9 @@ pub enum Error<DE> {
     Phy,
     ReedSolomon,
     SfdTimeout,
-    Overrun,
     PreambleDetectionTimeout,
     PayloadTooLarge,
+    FrameWaitTimeout,
 }
 
 pub type Result<SPI, T> = core::result::Result<T, Error<ll::Error<SPI>>>;

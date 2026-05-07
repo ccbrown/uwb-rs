@@ -1,9 +1,8 @@
 use crate::{Config, Device, Error, ReadyState, Result};
 
 use dw3000_ng::{configs, ll};
-use embassy_time::Timer;
 use embedded_hal::digital::OutputPin;
-use embedded_hal_async::{digital::Wait, spi::SpiDevice};
+use embedded_hal_async::{delay::DelayNs, digital::Wait, spi::SpiDevice};
 
 pub struct UninitializedState;
 
@@ -14,7 +13,10 @@ async fn read_otp<SPI: SpiDevice>(dev: &mut ll::DW3000<SPI>, addr: u16) -> Resul
     Ok(dev.otp_rdata().read().await?.value())
 }
 
-async fn calibrate_pgf_inner<SPI: SpiDevice>(dev: &mut ll::DW3000<SPI>) -> Result<SPI, ()> {
+async fn calibrate_pgf_inner<SPI: SpiDevice, D: DelayNs>(
+    dev: &mut ll::DW3000<SPI>,
+    mut delay: D,
+) -> Result<SPI, ()> {
     dev.rx_cal()
         .modify(|_, w| w.comp_dly(0x2).cal_mode(1))
         .await?;
@@ -23,14 +25,14 @@ async fn calibrate_pgf_inner<SPI: SpiDevice>(dev: &mut ll::DW3000<SPI>) -> Resul
 
     let mut max_retries = 3;
     let mut success = true;
-    Timer::after_micros(20).await;
+    delay.delay_us(20).await;
     while dev.rx_cal_sts().read().await?.value() == 0 {
         max_retries -= 1;
         if max_retries == 0 {
             success = false;
             break;
         }
-        Timer::after_micros(20).await;
+        delay.delay_us(20).await;
     }
 
     if !success {
@@ -51,13 +53,16 @@ async fn calibrate_pgf_inner<SPI: SpiDevice>(dev: &mut ll::DW3000<SPI>) -> Resul
 
     Ok(())
 }
-async fn calibrate_pgf<SPI: SpiDevice>(dev: &mut ll::DW3000<SPI>) -> Result<SPI, ()> {
+async fn calibrate_pgf<SPI: SpiDevice, D: DelayNs>(
+    dev: &mut ll::DW3000<SPI>,
+    mut delay: D,
+) -> Result<SPI, ()> {
     let ldo_ctrl_low = dev.ldo_ctrl().read().await?.low();
     dev.ldo_ctrl().modify(|_, w| w.low(0x105)).await?;
 
-    Timer::after_micros(20).await;
+    delay.delay_us(20).await;
 
-    let pgf_cal_result = calibrate_pgf_inner(dev).await;
+    let pgf_cal_result = calibrate_pgf_inner(dev, delay).await;
 
     dev.ldo_ctrl().modify(|_, w| w.low(ldo_ctrl_low)).await?;
     pgf_cal_result
@@ -183,17 +188,19 @@ async fn start_pll_calibration<SPI: SpiDevice>(
     Ok(())
 }
 
-impl<SPI, O, IRQ> Device<SPI, O, IRQ, UninitializedState>
+impl<SPI, O, Delay, IRQ> Device<SPI, O, IRQ, Delay, UninitializedState>
 where
     SPI: SpiDevice,
     O: OutputPin,
     IRQ: Wait,
+    Delay: DelayNs,
 {
-    pub fn new(spi: SPI, rst: O, irq: IRQ, address: [u8; 8]) -> Self {
+    pub fn new(spi: SPI, rst: O, irq: IRQ, delay: Delay, address: [u8; 8]) -> Self {
         let dev = ll::DW3000::new(spi);
         Self {
             address,
             config: Default::default(),
+            delay,
             state: UninitializedState,
             dev,
             rst,
@@ -201,13 +208,16 @@ where
         }
     }
 
-    pub async fn init(mut self, config: Config) -> Result<SPI, Device<SPI, O, IRQ, ReadyState>> {
+    pub async fn init(
+        mut self,
+        config: Config,
+    ) -> Result<SPI, Device<SPI, O, IRQ, Delay, ReadyState>> {
         let dev = &mut self.dev;
 
         // reset the device
         {
             self.rst.set_low().expect("failed to set rst low");
-            Timer::after_millis(1).await;
+            self.delay.delay_ms(1).await;
             self.rst.set_high().expect("failed to set rst high");
         }
 
@@ -340,7 +350,7 @@ where
         }
 
         tune_dgc(dev, &config).await?;
-        calibrate_pgf(dev).await?;
+        calibrate_pgf(dev, &mut self.delay).await?;
 
         // set the pan id and address
         {
@@ -356,6 +366,20 @@ where
         if config.enable_diagnostics {
             dev.cia_conf().modify(|_, w| w.mindiag(0)).await?;
         }
+
+        // enable diagnostics for double buffering mode
+        dev.rdb_diag()
+            .write(|w| {
+                w.rdb_dmode(match config.enable_diagnostics {
+                    true => 4,
+                    false => 1,
+                })
+            })
+            .await?;
+
+        // program an indirect pointer so we can efficiently read from the second buffer set
+        dev.ptr_addr_a().write(|w| w.ptra_base(0x18)).await?;
+        dev.ptr_offset_a().write(|w| w.ptra_ofs(0xe8)).await?;
 
         self.config = config;
         Ok(self.with_state(ReadyState { next_seq: 0 }))
