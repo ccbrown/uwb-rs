@@ -10,7 +10,7 @@ pub struct ReceivingState {
     pub(crate) ready_state: ReadyState,
 }
 
-#[derive(defmt::Format)]
+#[derive(Clone, defmt::Format)]
 pub struct SignalPower {
     pub receive_dbm: f32,
     pub first_path_dbm: f32,
