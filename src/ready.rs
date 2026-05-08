@@ -19,14 +19,24 @@ where
     SPI: SpiDevice,
     IRQ: Wait,
 {
-    /// Enters into deep sleep.
-    pub async fn sleep(mut self) -> Result<SPI, Device<SPI, O, IRQ, Delay, AsleepState>> {
+    async fn configure_aon(&mut self) -> Result<SPI, ()> {
         let dev = &mut self.dev;
 
-        dev.aon_cfg().write(|w| w.sleep_en(1)).await?;
-        dev.aon_ctrl().write(|w| w.cfg_upload(1)).await?;
+        dev.aon_dig_cfg()
+            .write(|w| w.onw_aon_dld(1).onw_go2idle(1))
+            .await?;
+        dev.aon_cfg().write(|w| w.sleep_en(1).wake_csn(1)).await?;
 
-        Ok(self.with_state(AsleepState))
+        Ok(())
+    }
+
+    /// Enters into deep sleep.
+    pub async fn sleep(mut self) -> Result<SPI, Device<SPI, O, IRQ, Delay, AsleepState>> {
+        self.configure_aon().await?;
+        self.dev.aon_ctrl().write(|w| w.cfg_upload(1)).await?;
+
+        let ready_state = self.state.clone();
+        Ok(self.with_state(AsleepState { ready_state }))
     }
 
     /// Puts the device into receive mode.
