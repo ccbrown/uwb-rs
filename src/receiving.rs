@@ -1,7 +1,7 @@
 use crate::{Device, Error, ReadyState, Result, Timestamp};
 
 use dw3000_ng::{configs, FastCommand};
-use embedded_hal_async::{delay::DelayNs, digital::Wait, spi::SpiDevice};
+use embedded_hal_async::{digital::Wait, spi::SpiDevice};
 use num_traits::Float;
 use smoltcp::wire::ieee802154;
 
@@ -62,7 +62,6 @@ impl<SPI, O, IRQ, Delay> Device<SPI, O, IRQ, Delay, ReceivingState>
 where
     SPI: SpiDevice,
     IRQ: Wait,
-    Delay: DelayNs,
 {
     /// Stops receiving and goes back to the ready state.
     pub async fn stop(mut self) -> Result<SPI, Device<SPI, O, IRQ, Delay, ReadyState>> {
@@ -155,7 +154,7 @@ where
     /// Waits for a frame to be ready and returns the buffer number (0 or 1).
     async fn wait_for_frame_ready(&mut self) -> Result<SPI, u8> {
         loop {
-            self.wait_for_irq_with_timeout_us(100_000).await?;
+            let _ = self.irq.wait_for_high().await;
 
             let status = self.dev.sys_status().read().await?;
             if status.rxfcg() == 1 {
