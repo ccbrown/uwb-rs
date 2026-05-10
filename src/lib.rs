@@ -20,6 +20,7 @@ pub use smoltcp::wire::ieee802154;
 
 use embedded_hal::digital::OutputPin;
 use embedded_hal_async::{delay::DelayNs, digital::Wait, spi::SpiDevice};
+use futures::FutureExt;
 use smoltcp::wire::ieee802154::{Address, Pan};
 
 // The dw3000_ng crate has both a high and low level API for interacting with the DW3000.
@@ -94,6 +95,23 @@ where
 impl<SPI, O, IRQ, Delay, State> Device<SPI, O, IRQ, Delay, State>
 where
     SPI: SpiDevice,
+    IRQ: Wait,
+    Delay: DelayNs,
+{
+    pub(crate) async fn wait_for_irq_with_timeout_us(
+        &mut self,
+        timeout_us: u32,
+    ) -> Result<SPI, ()> {
+        futures::select_biased! {
+             _ = self.irq.wait_for_high().fuse() => Ok(()),
+             _ = self.delay.delay_us(timeout_us).fuse() => Err(Error::IrqTimeout),
+        }
+    }
+}
+
+impl<SPI, O, IRQ, Delay, State> Device<SPI, O, IRQ, Delay, State>
+where
+    SPI: SpiDevice,
 {
     /// Reads bytes directly from a register. The given buffer should be 2 bytes plus the length of
     /// the data to be read, and the data will be read into the buffer starting at index 2.
@@ -158,6 +176,7 @@ pub enum Error<DE> {
     PreambleDetectionTimeout,
     PayloadTooLarge,
     FrameWaitTimeout,
+    IrqTimeout,
 }
 
 pub type Result<SPI, T> = core::result::Result<T, Error<ll::Error<SPI>>>;

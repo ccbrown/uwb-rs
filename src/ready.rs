@@ -1,7 +1,7 @@
 use crate::{AsleepState, Device, Error, ReceivingState, Result, Timestamp};
 
 use dw3000_ng::{ll, FastCommand};
-use embedded_hal_async::{digital::Wait, spi::SpiDevice};
+use embedded_hal_async::{delay::DelayNs, digital::Wait, spi::SpiDevice};
 use smoltcp::wire::{
     ieee802154::{self, Address},
     Ieee802154Frame,
@@ -18,6 +18,7 @@ impl<SPI, O, IRQ, Delay> Device<SPI, O, IRQ, Delay, ReadyState>
 where
     SPI: SpiDevice,
     IRQ: Wait,
+    Delay: DelayNs,
 {
     async fn configure_aon(&mut self) -> Result<SPI, ()> {
         let dev = &mut self.dev;
@@ -71,7 +72,7 @@ where
     pub async fn send(&mut self, buf: &[u8]) -> Result<SPI, Timestamp> {
         self.prepare_tx(buf).await?;
         self.dev.fast_command(FastCommand::CMD_TX as u8).await?;
-        self.wait_for_tx().await
+        self.wait_for_tx_timeout_us(20_000).await
     }
 
     /// Sends a single IEEE 802.15.4 frame.
@@ -84,7 +85,7 @@ where
             .write(|w| w.value((timestamp.as_raw() >> 8) as _))
             .await?;
         self.dev.fast_command(FastCommand::CMD_DTX as u8).await?;
-        self.wait_for_tx().await
+        self.wait_for_tx_timeout_us(20_000_000).await
     }
 
     /// Sends a single IEEE 802.15.4 frame.
@@ -102,7 +103,7 @@ where
             .write(|w| w.value(((interval_ns + 2) * (4992 / 2) / 10000) as _))
             .await?;
         self.dev.fast_command(FastCommand::CMD_DTX_TS as u8).await?;
-        self.wait_for_tx().await
+        self.wait_for_tx_timeout_us(20_000_000).await
     }
 
     async fn prepare_tx(&mut self, buf: &[u8]) -> Result<SPI, ()> {
@@ -164,14 +165,12 @@ where
         Ok(())
     }
 
-    async fn wait_for_tx(&mut self) -> Result<SPI, Timestamp> {
-        loop {
-            let _ = self.irq.wait_for_high().await;
+    async fn wait_for_tx_timeout_us(&mut self, timeout_us: u32) -> Result<SPI, Timestamp> {
+        self.wait_for_irq_with_timeout_us(timeout_us).await?;
 
-            let status = self.dev.sys_status().read().await?;
-            if status.txfrs() == 1 {
-                break;
-            }
+        let status = self.dev.sys_status().read().await?;
+        if status.txfrs() != 1 {
+            return Err(Error::Unknown);
         }
 
         let timestamp = Timestamp::from_raw(self.dev.tx_time().read().await?.tx_stamp());
