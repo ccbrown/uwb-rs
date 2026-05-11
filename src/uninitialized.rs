@@ -53,6 +53,7 @@ async fn calibrate_pgf_inner<SPI: SpiDevice, D: DelayNs>(
 
     Ok(())
 }
+
 async fn calibrate_pgf<SPI: SpiDevice, D: DelayNs>(
     dev: &mut ll::DW3000<SPI>,
     mut delay: D,
@@ -74,8 +75,9 @@ async fn tune_dgc<SPI: SpiDevice>(dev: &mut ll::DW3000<SPI>, config: &Config) ->
 
         let ch = config.channel;
         if dgc_otp == 0x10000240 {
-            dev.otp_cfg().modify(|_, w| w.dgc_kick(1)).await?;
-            dev.otp_cfg().modify(|_, w| w.dgc_sel(ch as u8)).await?;
+            dev.otp_cfg()
+                .modify(|_, w| w.dgc_sel(ch as u8).dgc_kick(1))
+                .await?;
         } else {
             dev.dgc_lut_0()
                 .modify(|_, w| w.value(ch.get_recommended_dgc_lut_0()))
@@ -116,6 +118,42 @@ async fn tune_dgc<SPI: SpiDevice>(dev: &mut ll::DW3000<SPI>, config: &Config) ->
     Ok(())
 }
 
+pub(crate) async fn otp_ldo_bias_kicks<SPI: SpiDevice>(
+    dev: &mut ll::DW3000<SPI>,
+) -> Result<SPI, ()> {
+    let ldo_tune_l = read_otp(dev, 0x04).await?;
+    let ldo_tune_h = read_otp(dev, 0x05).await?;
+    let biastune_cal = (read_otp(dev, 0x0A).await? >> 0x10) & 0x1F;
+    if ldo_tune_l != 0 && ldo_tune_h != 0 && biastune_cal != 0 {
+        dev.otp_cfg().write(|w| w.ldo_kick(1).bias_kick(1)).await?;
+        dev.bias_ctrl()
+            .modify(|r, w| w.value(r.value() & 0xFFE0 | biastune_cal as u16))
+            .await?
+    }
+    Ok(())
+}
+
+pub(crate) async fn configure_double_buffering<SPI: SpiDevice>(
+    dev: &mut ll::DW3000<SPI>,
+    config: &Config,
+) -> Result<SPI, ()> {
+    // enable diagnostics for double buffering mode
+    dev.rdb_diag()
+        .write(|w| {
+            w.rdb_dmode(match config.enable_diagnostics {
+                true => 4,
+                false => 1,
+            })
+        })
+        .await?;
+
+    // program an indirect pointer so we can efficiently read from the second buffer set
+    dev.ptr_addr_a().write(|w| w.ptra_base(0x18)).await?;
+    dev.ptr_offset_a().write(|w| w.ptra_ofs(0xe8)).await?;
+
+    Ok(())
+}
+
 async fn start_pll_calibration<SPI: SpiDevice>(
     dev: &mut ll::DW3000<SPI>,
     config: &Config,
@@ -139,32 +177,22 @@ async fn start_pll_calibration<SPI: SpiDevice>(
             .await?;
     }
 
+    dev.rf_tx_ctrl_1().modify(|_, w| w.value(0x0E)).await?;
     dev.rf_tx_ctrl_2()
-        .modify(|_, w| w.value(config.channel.get_recommended_rf_tx_ctrl_2()))
+        .write(|w| w.value(config.channel.get_recommended_rf_tx_ctrl_2()))
         .await?;
+
     dev.pll_cfg()
-        .modify(|_, w| w.value(config.channel.get_recommended_pll_conf()))
+        .write(|w| w.value(config.channel.get_recommended_pll_conf()))
         .await?;
 
     dev.ldo_rload().modify(|_, w| w.value(0x14)).await?;
 
-    dev.rf_tx_ctrl_1().modify(|_, w| w.value(0x0E)).await?;
-
-    dev.pll_cal().modify(|_, w| w.use_old(0x0)).await?;
-    dev.pll_cal().modify(|_, w| w.pll_cfg_ld(0x8)).await?;
-
-    dev.sys_status()
-        .modify(|_, w| {
-            w.irqs(0)
-                .cplock(0x1)
-                .spicrce(0)
-                .aat(0)
-                .txfrb(0)
-                .txprs(0)
-                .txphs(0)
-                .txfrs(0)
-        })
+    dev.pll_cal()
+        .modify(|_, w| w.use_old(0x0).pll_cfg_ld(0x8))
         .await?;
+
+    dev.sys_status().write(|w| w.cplock(1)).await?;
 
     dev.clk_ctrl()
         .modify(|_, w| {
@@ -244,15 +272,7 @@ where
 
         // copy pre-calibrated values from otp to their respective registers
         {
-            let ldo_tune_l = read_otp(dev, 0x04).await?;
-            let ldo_tune_h = read_otp(dev, 0x05).await?;
-            let biastune_cal = (read_otp(dev, 0x0A).await? >> 0x10) & 0x1F;
-            if ldo_tune_l != 0 && ldo_tune_h != 0 && biastune_cal != 0 {
-                dev.otp_cfg().write(|w| w.ldo_kick(1).bias_kick(1)).await?;
-                dev.bias_ctrl()
-                    .modify(|r, w| w.value(r.value() & 0xFFE0 | biastune_cal as u16))
-                    .await?
-            }
+            otp_ldo_bias_kicks(dev).await?;
 
             let xtrim = read_otp(dev, 0x1e).await? & 0x3F;
             if xtrim != 0 {
@@ -286,7 +306,7 @@ where
 
             dev.otp_cfg()
                 .modify(|_, w| {
-                    w.ops_sel(if config.preamble_length.get_num_of_symbols() > 256 {
+                    w.ops_sel(if config.preamble_length.get_num_of_symbols() >= 256 {
                         0 // long
                     } else {
                         2 // short
@@ -344,7 +364,7 @@ where
         {
             dev.sys_enable().write(|w| w.cplock_en(1)).await?;
 
-            while dev.sys_status().read().await?.cplock() != 0 {
+            while dev.sys_status().read().await?.cplock() != 1 {
                 let _ = self.irq.wait_for_high().await;
             }
         }
@@ -367,19 +387,8 @@ where
             dev.cia_conf().modify(|_, w| w.mindiag(0)).await?;
         }
 
-        // enable diagnostics for double buffering mode
-        dev.rdb_diag()
-            .write(|w| {
-                w.rdb_dmode(match config.enable_diagnostics {
-                    true => 4,
-                    false => 1,
-                })
-            })
-            .await?;
-
-        // program an indirect pointer so we can efficiently read from the second buffer set
-        dev.ptr_addr_a().write(|w| w.ptra_base(0x18)).await?;
-        dev.ptr_offset_a().write(|w| w.ptra_ofs(0xe8)).await?;
+        // configure double buffering
+        configure_double_buffering(dev, &config).await?;
 
         self.config = config;
         Ok(self.with_state(ReadyState { next_seq: 0 }))

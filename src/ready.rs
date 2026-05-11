@@ -23,9 +23,8 @@ where
     async fn configure_aon(&mut self) -> Result<SPI, ()> {
         let dev = &mut self.dev;
 
-        dev.aon_dig_cfg()
-            .write(|w| w.onw_aon_dld(1).onw_go2idle(1))
-            .await?;
+        dev.seq_ctrl().modify(|_, w| w.ainit2idle(0)).await?;
+        dev.aon_dig_cfg().modify(|_, w| w.onw_aon_dld(1)).await?;
         dev.aon_cfg().write(|w| w.sleep_en(1).wake_csn(1)).await?;
 
         Ok(())
@@ -34,7 +33,11 @@ where
     /// Enters into deep sleep.
     pub async fn sleep(mut self) -> Result<SPI, Device<SPI, O, IRQ, Delay, AsleepState>> {
         self.configure_aon().await?;
-        self.dev.aon_ctrl().write(|w| w.cfg_upload(1)).await?;
+
+        self.dev.sys_status().write(|w| w.spirdy(1)).await?;
+        self.dev.sys_enable().write(|w| w.spirdy_en(1)).await?;
+
+        self.dev.aon_ctrl().write(|w| w.save(1)).await?;
 
         let ready_state = self.state.clone();
         Ok(self.with_state(AsleepState { ready_state }))
