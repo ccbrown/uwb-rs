@@ -19,6 +19,10 @@ impl Duration {
         self.0 * 10000000 / 4992 / 128
     }
 
+    pub fn from_ticks(ticks: i64) -> Self {
+        Duration(ticks)
+    }
+
     pub fn from_picos(picoseconds: i64) -> Self {
         Duration(picoseconds * 4992 * 128 / 10000000)
     }
