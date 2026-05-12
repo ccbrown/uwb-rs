@@ -2,8 +2,10 @@ use crate::{Device, Error, ReadyState, Result, Timestamp};
 
 use dw3000_ng::{configs, FastCommand};
 use embedded_hal_async::{digital::Wait, spi::SpiDevice};
-use num_traits::Float;
 use smoltcp::wire::ieee802154;
+
+#[allow(unused)]
+use num_traits::Float;
 
 pub struct ReceivingState {
     pub(crate) wait_timeout_ms: Option<u32>,
@@ -208,7 +210,7 @@ where
         }
 
         let rx_stamp = self.read_reg_u64(db_register_set_id, 4).await? & 0xffffffffff;
-        let timestamp = Timestamp::from_raw(rx_stamp);
+        let timestamp = Timestamp::from_ticks(rx_stamp);
 
         let signal_power = if self.config.enable_diagnostics {
             self.estimate_signal_power(db_register_set_id).await?

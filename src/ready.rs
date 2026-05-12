@@ -85,7 +85,7 @@ where
         self.prepare_tx(buf).await?;
         self.dev
             .dx_time()
-            .write(|w| w.value((timestamp.as_raw() >> 8) as _))
+            .write(|w| w.value((timestamp.as_ticks() >> 8) as _))
             .await?;
         self.dev.fast_command(FastCommand::CMD_DTX as u8).await?;
         self.wait_for_tx_timeout_us(20_000_000).await
@@ -176,7 +176,7 @@ where
             return Err(Error::Unknown);
         }
 
-        let timestamp = Timestamp::from_raw(self.dev.tx_time().read().await?.tx_stamp());
+        let timestamp = Timestamp::from_ticks(self.dev.tx_time().read().await?.tx_stamp());
 
         Ok(timestamp)
     }
