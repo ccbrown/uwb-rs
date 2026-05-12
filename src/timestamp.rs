@@ -1,6 +1,6 @@
 use core::{
     cmp::{Ordering, PartialOrd},
-    ops::Sub,
+    ops::{Add, Neg, Sub},
 };
 
 /// This represents a duration based on the UWB device clock, which has a resolution of roughly 15
@@ -33,6 +33,14 @@ impl Duration {
     pub fn as_meters(&self) -> f64 {
         let picoseconds = self.as_picos();
         picoseconds as f64 * 0.000_299_792_458
+    }
+}
+
+impl Neg for Duration {
+    type Output = Duration;
+
+    fn neg(self) -> Self::Output {
+        Duration(-self.0)
     }
 }
 
@@ -91,6 +99,22 @@ impl Sub for Timestamp {
     }
 }
 
+impl Add<Duration> for Timestamp {
+    type Output = Timestamp;
+
+    fn add(self, rhs: Duration) -> Self::Output {
+        Timestamp((self.0 as i64 + rhs.0) as u64 & ((1u64 << 40) - 1))
+    }
+}
+
+impl Sub<Duration> for Timestamp {
+    type Output = Timestamp;
+
+    fn sub(self, rhs: Duration) -> Self::Output {
+        Timestamp((self.0 as i64 - rhs.0) as u64 & ((1u64 << 40) - 1))
+    }
+}
+
 impl PartialOrd for Timestamp {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         let d = (*self - *other).as_ticks();
@@ -109,6 +133,13 @@ mod tests {
     use super::*;
 
     // ── Duration ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn duration_neg() {
+        assert_eq!((-Duration(0)).as_ticks(), 0);
+        assert_eq!((-Duration(42)).as_ticks(), -42);
+        assert_eq!((-Duration(-42)).as_ticks(), 42);
+    }
 
     #[test]
     fn duration_as_ticks() {
@@ -266,5 +297,78 @@ mod tests {
         let a = Timestamp::from_ticks((1 << 40) - 100);
         let b = Timestamp::from_ticks(100);
         assert_eq!(a.partial_cmp(&b), Some(Ordering::Less));
+    }
+
+    // ── Timestamp + Duration / Timestamp - Duration ───────────────────────
+
+    #[test]
+    fn timestamp_add_duration_zero() {
+        let t = Timestamp::from_ticks(1000);
+        assert_eq!((t + Duration(0)).as_ticks(), 1000);
+    }
+
+    #[test]
+    fn timestamp_add_duration_positive() {
+        let t = Timestamp::from_ticks(1000);
+        assert_eq!((t + Duration(500)).as_ticks(), 1500);
+    }
+
+    #[test]
+    fn timestamp_add_duration_negative() {
+        let t = Timestamp::from_ticks(1000);
+        assert_eq!((t + Duration(-400)).as_ticks(), 600);
+    }
+
+    #[test]
+    fn timestamp_add_duration_rollover() {
+        // Adding a duration that pushes the timestamp past the 40-bit boundary.
+        let t = Timestamp::from_ticks((1 << 40) - 100);
+        assert_eq!((t + Duration(200)).as_ticks(), 100);
+    }
+
+    #[test]
+    fn timestamp_add_duration_negative_underflow() {
+        // Adding a negative duration that wraps below zero.
+        let t = Timestamp::from_ticks(100);
+        assert_eq!((t + Duration(-200)).as_ticks(), (1u64 << 40) - 100);
+    }
+
+    #[test]
+    fn timestamp_sub_duration_zero() {
+        let t = Timestamp::from_ticks(1000);
+        assert_eq!((t - Duration(0)).as_ticks(), 1000);
+    }
+
+    #[test]
+    fn timestamp_sub_duration_positive() {
+        let t = Timestamp::from_ticks(1000);
+        assert_eq!((t - Duration(400)).as_ticks(), 600);
+    }
+
+    #[test]
+    fn timestamp_sub_duration_negative() {
+        let t = Timestamp::from_ticks(1000);
+        assert_eq!((t - Duration(-500)).as_ticks(), 1500);
+    }
+
+    #[test]
+    fn timestamp_sub_duration_underflow() {
+        // Subtracting a duration that wraps below zero.
+        let t = Timestamp::from_ticks(100);
+        assert_eq!((t - Duration(200)).as_ticks(), (1u64 << 40) - 100);
+    }
+
+    #[test]
+    fn timestamp_sub_duration_rollover() {
+        // Subtracting a negative duration that pushes past the 40-bit boundary.
+        let t = Timestamp::from_ticks((1 << 40) - 100);
+        assert_eq!((t - Duration(-200)).as_ticks(), 100);
+    }
+
+    #[test]
+    fn timestamp_add_sub_duration_round_trip() {
+        let t = Timestamp::from_ticks(500_000);
+        let d = Duration(12_345);
+        assert_eq!(((t + d) - d).as_ticks(), t.as_ticks());
     }
 }
