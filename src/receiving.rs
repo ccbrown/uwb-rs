@@ -42,8 +42,8 @@ impl Frame {
     }
 
     /// Returns the parsed IEEE 802.15.4 frame.
-    pub fn parsed(&self) -> ieee802154::Frame<&[u8]> {
-        ieee802154::Frame::new_unchecked(self.buffer.as_ref())
+    pub fn parsed(&self) -> smoltcp::wire::Result<ieee802154::Frame<&[u8]>> {
+        ieee802154::Frame::new_checked(self.buffer.as_ref())
     }
 }
 
@@ -217,6 +217,10 @@ where
         } else {
             None
         };
+
+        if (frame_len as usize) < FCS_SIZE {
+            return Err(Error::MalformedFrame);
+        }
 
         Ok(Frame {
             buffer: ReceiveBuffer {
