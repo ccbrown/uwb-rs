@@ -1,5 +1,5 @@
 use crate::{
-    uninitialized::{configure_double_buffering, otp_ldo_bias_kicks},
+    uninitialized::{calibrate_pgf, configure_double_buffering, otp_ldo_bias_kicks, tune_dgc},
     Device, Error, ReadyState, Result,
 };
 
@@ -59,6 +59,8 @@ where
 
         // reconfigure a few more things...
         {
+            tune_dgc(&mut self.dev, &self.config).await?;
+            calibrate_pgf(&mut self.dev, &mut self.delay).await?;
             configure_double_buffering(&mut self.dev, &self.config).await?;
             if let Address::Extended(addr) = self.config.address {
                 self.dev

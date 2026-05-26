@@ -55,7 +55,7 @@ async fn calibrate_pgf_inner<SPI: SpiDevice, D: DelayNs>(
     Ok(())
 }
 
-async fn calibrate_pgf<SPI: SpiDevice, D: DelayNs>(
+pub(crate) async fn calibrate_pgf<SPI: SpiDevice, D: DelayNs>(
     dev: &mut ll::DW3000<SPI>,
     mut delay: D,
 ) -> Result<SPI, ()> {
@@ -70,7 +70,10 @@ async fn calibrate_pgf<SPI: SpiDevice, D: DelayNs>(
     pgf_cal_result
 }
 
-async fn tune_dgc<SPI: SpiDevice>(dev: &mut ll::DW3000<SPI>, config: &Config) -> Result<SPI, ()> {
+pub(crate) async fn tune_dgc<SPI: SpiDevice>(
+    dev: &mut ll::DW3000<SPI>,
+    config: &Config,
+) -> Result<SPI, ()> {
     if (9..=24).contains(&config.rx_preamble_code) {
         let dgc_otp = read_otp(dev, 0x20).await?;
 
