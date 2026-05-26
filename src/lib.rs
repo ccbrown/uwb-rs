@@ -36,7 +36,8 @@ pub struct Config {
     /// enabled on anchors, but not battery operated devices.
     pub enable_diagnostics: bool,
 
-    pub pan: Pan,
+    pub address: Address,
+    pub pan: Option<Pan>,
     pub channel: Channel,
     pub pulse_repetition_frequency: PulseRepetitionFrequency,
     pub preamble_length: PreambleLength,
@@ -53,7 +54,8 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             enable_diagnostics: false,
-            pan: Pan(12345),
+            address: Address::Absent,
+            pan: None,
             channel: Channel::Channel9,
             pulse_repetition_frequency: PulseRepetitionFrequency::Mhz64,
             preamble_length: PreambleLength::Symbols64,
@@ -69,7 +71,6 @@ impl Default for Config {
 }
 
 pub struct Device<SPI, O, IRQ, Delay, State> {
-    address: [u8; 8],
     config: Config,
     dev: ll::DW3000<SPI>,
     irq: IRQ,
@@ -142,7 +143,7 @@ where
 impl<SPI, O, IRQ, Delay, State> Device<SPI, O, IRQ, Delay, State> {
     /// Returns the device's IEEE 802.15.4 address.
     pub fn address(&self) -> Address {
-        Address::Extended(self.address)
+        self.config.address
     }
 
     pub(crate) fn with_state<NewState>(
@@ -150,7 +151,6 @@ impl<SPI, O, IRQ, Delay, State> Device<SPI, O, IRQ, Delay, State> {
         new_state: NewState,
     ) -> Device<SPI, O, IRQ, Delay, NewState> {
         Device {
-            address: self.address,
             config: self.config,
             dev: self.dev,
             irq: self.irq,

@@ -124,10 +124,10 @@ where
             frame_pending: false,
             ack_request: false,
             pan_id_compression: true,
+            src_addr: Some(self.config.address),
             dst_addr: Some(Address::BROADCAST),
-            src_addr: Some(Address::Extended(self.address)),
-            src_pan_id: Some(config.pan),
-            dst_pan_id: Some(config.pan),
+            src_pan_id: config.pan,
+            dst_pan_id: config.pan,
         };
 
         let tx_buf_len = frame_repr.buffer_len() + buf.len() + FCS_SIZE;

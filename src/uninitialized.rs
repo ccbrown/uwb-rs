@@ -3,6 +3,7 @@ use crate::{Config, Device, Error, ReadyState, Result};
 use dw3000_ng::{configs, ll};
 use embedded_hal::digital::OutputPin;
 use embedded_hal_async::{delay::DelayNs, digital::Wait, spi::SpiDevice};
+use smoltcp::wire::ieee802154::Address;
 
 pub struct UninitializedState;
 
@@ -223,10 +224,9 @@ where
     IRQ: Wait,
     Delay: DelayNs,
 {
-    pub fn new(spi: SPI, rst: O, irq: IRQ, delay: Delay, address: [u8; 8]) -> Self {
+    pub fn new(spi: SPI, rst: O, irq: IRQ, delay: Delay) -> Self {
         let dev = ll::DW3000::new(spi);
         Self {
-            address,
             config: Default::default(),
             delay,
             state: UninitializedState,
@@ -301,7 +301,7 @@ where
                 .await?;
 
             dev.ff_cfg()
-                .modify(|_, w| w.ffab(1).ffad(1).ffaa(1).ffam(1))
+                .modify(|_, w| w.ffab(1).ffad(1).ffaa(1).ffam(1).ffib(1))
                 .await?;
 
             dev.otp_cfg()
@@ -375,11 +375,19 @@ where
         // set the pan id and address
         {
             dev.panadr()
-                .write(|w| w.pan_id(config.pan.0).short_addr(0xffff))
+                .write(|w| {
+                    w.pan_id(config.pan.map(|p| p.0).unwrap_or(0xffff))
+                        .short_addr(match config.address {
+                            Address::Short(addr) => u16::from_be_bytes(addr),
+                            _ => 0xffff,
+                        })
+                })
                 .await?;
-            dev.eui()
-                .write(|w| w.value(u64::from_be_bytes(self.address)))
-                .await?;
+            if let Address::Extended(addr) = config.address {
+                dev.eui()
+                    .write(|w| w.value(u64::from_be_bytes(addr)))
+                    .await?;
+            }
         }
 
         // enable diagnostics if requested

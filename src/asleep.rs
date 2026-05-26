@@ -9,6 +9,7 @@ use embedded_hal_async::{
     digital::Wait,
     spi::{self, SpiDevice},
 };
+use smoltcp::wire::ieee802154::Address;
 
 pub struct AsleepState {
     pub(crate) ready_state: ReadyState,
@@ -59,10 +60,12 @@ where
         // reconfigure a few more things...
         {
             configure_double_buffering(&mut self.dev, &self.config).await?;
-            self.dev
-                .eui()
-                .write(|w| w.value(u64::from_be_bytes(self.address)))
-                .await?;
+            if let Address::Extended(addr) = self.config.address {
+                self.dev
+                    .eui()
+                    .write(|w| w.value(u64::from_be_bytes(addr)))
+                    .await?;
+            }
         }
 
         let ready_state = self.state.ready_state.clone();
