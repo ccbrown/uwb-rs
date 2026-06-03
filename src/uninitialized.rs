@@ -359,6 +359,10 @@ where
             // use max power. with a low enough duty cycle, this will still be within regulatory
             // limits, but will ensure the best possible range.
             dev.tx_power().write(|w| w.value(0xffffffff)).await?;
+
+            dev.gpio_mode()
+                .write(|w| w.msgp6(if config.external_rx_enable { 1 } else { 0 }))
+                .await?;
         }
 
         start_pll_calibration(dev, &config).await?;

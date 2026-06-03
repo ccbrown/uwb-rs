@@ -48,6 +48,10 @@ pub struct Config {
     pub tx_preamble_code: u8,
     pub rx_preamble_code: u8,
     pub sfd_sequence: SfdSequence,
+
+    /// If true, GPIO6 will be configured as an external RX enable pin and driven high when the
+    /// device is in RX mode.
+    pub external_rx_enable: bool,
 }
 
 impl Default for Config {
@@ -66,6 +70,7 @@ impl Default for Config {
             tx_preamble_code: 9,
             rx_preamble_code: 9,
             sfd_sequence: SfdSequence::Ieee,
+            external_rx_enable: false,
         }
     }
 }
