@@ -49,9 +49,12 @@ pub struct Config {
     pub rx_preamble_code: u8,
     pub sfd_sequence: SfdSequence,
 
+    /// If true, the device will be configured to output a 31.25 MHz clock on GPIO0.
+    pub enable_clock_output: bool,
+
     /// If true, GPIO6 will be configured as an external RX enable pin and driven high when the
     /// device is in RX mode.
-    pub external_rx_enable: bool,
+    pub enable_external_rx: bool,
 }
 
 impl Default for Config {
@@ -70,7 +73,8 @@ impl Default for Config {
             tx_preamble_code: 9,
             rx_preamble_code: 9,
             sfd_sequence: SfdSequence::Ieee,
-            external_rx_enable: false,
+            enable_clock_output: false,
+            enable_external_rx: false,
         }
     }
 }

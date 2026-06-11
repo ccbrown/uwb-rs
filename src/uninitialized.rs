@@ -361,7 +361,10 @@ where
             dev.tx_power().write(|w| w.value(0xffffffff)).await?;
 
             dev.gpio_mode()
-                .write(|w| w.msgp6(if config.external_rx_enable { 1 } else { 0 }))
+                .write(|w| {
+                    w.msgp0(if config.enable_clock_output { 3 } else { 0 })
+                        .msgp6(if config.enable_external_rx { 1 } else { 0 })
+                })
                 .await?;
         }
 
