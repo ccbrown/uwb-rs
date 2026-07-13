@@ -6,6 +6,7 @@ use core::{
 /// This represents a duration based on the UWB device clock, which has a resolution of roughly 15
 /// picoseconds.
 #[derive(Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "std", derive(Debug))]
 pub struct Duration(i64);
 
 impl Duration {
@@ -60,6 +61,7 @@ impl defmt::Format for Duration {
 /// Rollovers are accounted for in all operations, including subtraction and comparison. Operations
 /// involving timestamps that are more than 8.6 seconds apart may yield incorrect results.
 #[derive(Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "std", derive(Debug))]
 pub struct Timestamp(u64);
 
 impl Timestamp {
