@@ -17,7 +17,9 @@ impl Duration {
 
     /// Converts a raw duration value to picoseconds.
     pub fn as_picos(&self) -> i64 {
-        self.0 * 10000000 / 4992 / 128
+        // We need all 64 bits to avoid overflowing with the maximum duration of 2^40 ticks.
+        let abs = (self.0.abs() as u64) * 10000000 / 4992 / 128;
+        abs as i64 * self.0.signum()
     }
 
     pub fn from_ticks(ticks: i64) -> Self {
@@ -163,6 +165,11 @@ mod tests {
         // 638976 == 4992 * 128 ticks is exactly 10_000_000 ps
         assert_eq!(Duration(638976).as_picos(), 10_000_000);
         assert_eq!(Duration(-638976).as_picos(), -10_000_000);
+    }
+
+    #[test]
+    fn duration_as_picos_max_ticks() {
+        assert_eq!(Duration((1 << 40) - 1).as_picos(), 17207401025625);
     }
 
     #[test]
