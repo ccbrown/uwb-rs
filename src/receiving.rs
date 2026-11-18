@@ -222,10 +222,11 @@ where
 
     /// Reads everything about a frame that the device keeps in its diagnostic register sets.
     ///
-    /// Nothing can be received while this runs, so it has to be quick. Counterintuitively, that
-    /// means several small reads rather than one large one: small transactions finish before
-    /// the task has a chance to yield, whereas after a large one the task has to wait for the
-    /// executor to get back to it, which takes hundreds of microseconds on a busy system.
+    /// Nothing can be received while this runs, so it has to be quick. Counterintuitively, on at
+    /// least some platforms that means several small reads rather than one large one. With
+    /// Embassy on an STM32H7, small transactions were observed to finish before the task had a
+    /// chance to yield, whereas after a large one the task had to wait for the executor to get
+    /// back to it, which took hundreds of microseconds on a busy system.
     async fn read_frame_metadata(&mut self, buffer_number: u8) -> Result<SPI, FrameMetadata> {
         let db_register_set_id = match buffer_number {
             0 => 0x18,
@@ -329,8 +330,10 @@ where
 
         let n_squared = (n * n) as f32;
 
+        // each of these is up to 22 bits, so their squares don't fit in a u32
+        let f_squared = [f1, f2, f3].map(|f| u64::from(f).pow(2));
         let first_path_dbm =
-            10.0 * (((f1 * f1 + f2 * f2 + f3 * f3) as f32) / n_squared).log10() + d6 - a;
+            10.0 * ((f_squared.iter().sum::<u64>() as f32) / n_squared).log10() + d6 - a;
 
         let receive_dbm = 10.0 * ((c as f32 * (1 << 21) as f32) / n_squared).log10() + d6 - a;
 
@@ -350,10 +353,11 @@ where
             }
         };
 
-        // XXX: The metadata must be read before the receiver is enabled again. The device keeps
-        // it in memory that it also uses while processing an incoming frame. If that happens
-        // during our reads, they can return garbage, and the device can fail to store the
-        // incoming frame's metadata, leaving that frame with the metadata of an earlier one.
+        // XXX: The metadata must be read before the receiver is enabled again. The user manual
+        // says otherwise, but in practice our reads can collide with the device processing an
+        // incoming frame (which it reports as an SPI collision with the CIA). When that happens,
+        // our reads have been observed to return garbage, and the incoming frame has been observed
+        // to end up with parts of an earlier frame's metadata.
         let metadata_result = self.read_frame_metadata(buffer_number).await;
 
         // the rest isn't affected by an incoming frame, so go ahead and begin the next receive asap
