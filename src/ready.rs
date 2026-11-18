@@ -66,6 +66,7 @@ where
         let mut ret = self.with_state(ReceivingState {
             wait_timeout_ms,
             ready_state,
+            signal_power_config: Default::default(),
         });
         ret.init().await?;
         Ok(ret)
